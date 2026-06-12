@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offkab FC2 画廊</title>
+  <meta name="description" content="浏览 offkab 的 FC2 收藏，支持图片预览和磁力链接">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Background Effects -->
+  <div class="bg-effect">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <!-- Header -->
+  <header class="header" id="header">
+    <div class="header-inner">
+      <a class="logo" href="/">
+        <div class="logo-icon">🎬</div>
+        <span class="logo-text">Offkab 画廊</span>
+        <span class="logo-badge">FC2</span>
+      </a>
+      
+      <div class="header-controls">
+        <button id="btnManualScrape" class="btn btn-primary">
+          <span class="icon">🔄</span> 手动获取
+        </button>
+        <button id="btnAutoScrape" class="btn btn-secondary">
+          <span class="icon">⏱️</span> 打开自动获取
+        </button>
+        <button id="btnShowLogs" class="btn btn-secondary">
+          <span class="icon">📜</span> 运行日志
+        </button>
+        <div id="scrapeStatus" class="scrape-status"></div>
+      </div>
+
+      <div class="search-bar">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="搜索标题..." autocomplete="off">
+      </div>
+      <div class="header-stats">
+        <div class="stat-item">
+          <span>总计:</span>
+          <span class="count" id="totalCount">-</span>
+        </div>
+        <div class="stat-item">
+          <span>当前显示:</span>
+          <span class="count" id="showingCount">-</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- Filter Bar -->
+    <div class="filter-bar" id="filterBar">
+      <button class="filter-btn active" data-filter="all">全部</button>
+      <button class="filter-btn" data-filter="has-images">有预览图</button>
+      <button class="filter-btn" data-filter="large">体积大(>5GB)</button>
+      <button class="filter-btn" data-filter="popular">热门(>50做种)</button>
+      <select class="sort-select" id="sortSelect">
+        <option value="date-desc">最新发布</option>
+        <option value="date-asc">最早发布</option>
+        <option value="size-desc">体积最大</option>
+        <option value="seeders-desc">做种最多</option>
+        <option value="downloads-desc">下载最多</option>
+      </select>
+    </div>
+
+    <!-- Gallery Grid -->
+    <div class="gallery-grid" id="galleryGrid">
+      <!-- Loading State -->
+      <div class="loading-state" id="loadingState" style="grid-column: 1 / -1;">
+        <div class="spinner"></div>
+        <p class="loading-text">正在加载画廊数据...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Image Modal -->
+  <div class="modal-overlay" id="imageModal">
+    <button class="modal-close" id="modalClose" title="关闭">✕</button>
+    <div class="modal-scroll-area" id="modalScrollArea">
+      <img id="modalImage" src="" alt="全尺寸预览">
+    </div>
+  </div>
+
+  <!-- Log Modal -->
+  <div class="modal-overlay" id="logModal">
+    <div class="log-modal-content">
+      <div class="log-header">
+        <span>📜 爬虫运行日志</span>
+        <button class="log-close" id="logClose">✕</button>
+      </div>
+      <div class="log-body" id="logBody">
+        <div class="log-line">等待日志...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">✓ 磁力链接已复制到剪贴板</div>
+
+  <script>
+    // ═══ State ═══════════════════════════════════════════════════
+    let allData = [];
+    let filteredData = [];
+    let currentFilter = 'all';
+    let currentSort = 'date-desc';
+    let searchQuery = '';
+    let autoScrapeEnabled = false;
+
+    // ═══ DOM Elements ════════════════════════════════════════════
+    const grid = document.getElementById('galleryGrid');
+    const loading = document.getElementById('loadingState');
+    const searchInput = document.getElementById('searchInput');
+    const sortSelect = document.getElementById('sortSelect');
+    const totalCount = document.getElementById('totalCount');
+    const showingCount = document.getElementById('showingCount');
+    const toast = document.getElementById('toast');
+    const imageModal = document.getElementById('imageModal');
+    const modalImage = document.getElementById('modalImage');
+    const modalClose = document.getElementById('modalClose');
+
+    const btnManualScrape = document.getElementById('btnManualScrape');
+    const btnAutoScrape = document.getElementById('btnAutoScrape');
+    const btnShowLogs = document.getElementById('btnShowLogs');
+    const scrapeStatus = document.getElementById('scrapeStatus');
+
+    const logModal = document.getElementById('logModal');
+    const logBody = document.getElementById('logBody');
+    const logClose = document.getElementById('logClose');
+
+    // ═══ Log Viewer ══════════════════════════════════════════════
+    let logInterval = null;
+
+    function openLogModal() {
+      logModal.classList.add('active');
+      document.body.style.overflow = 'hidden';
+      updateLogs();
+      logInterval = setInterval(updateLogs, 1000);
+    }
+
+    function closeLogModal() {
+      logModal.classList.remove('active');
+      document.body.style.overflow = '';
+      clearInterval(logInterval);
+    }
+
+    btnShowLogs.addEventListener('click', openLogModal);
+    logClose.addEventListener('click', closeLogModal);
+    logModal.addEventListener('click', (e) => {
+      if (e.target === logModal) closeLogModal();
+    });
+
+    async function updateLogs() {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        if (data.logs && data.logs.length > 0) {
+          const isScrolledToBottom = Math.abs(logBody.scrollHeight - logBody.clientHeight - logBody.scrollTop) <= 10;
+          logBody.innerHTML = data.logs.map(line => `<div class="log-line">${escapeHTML(line)}</div>`).join('');
+          if (isScrolledToBottom) {
+            logBody.scrollTop = logBody.scrollHeight;
+          }
+        } else {
+          logBody.innerHTML = '<div class="log-line">暂无日志...</div>';
+        }
+      } catch (e) {
+        console.error('Failed to fetch logs', e);
+      }
+    }
+
+    // ═══ Data Loading ════════════════════════════════════════════
+    async function loadData() {
+      try {
+        const res = await fetch('/api/data');
+        if (!res.ok) throw new Error('No data found');
+        allData = await res.json();
+        totalCount.textContent = allData.length;
+        applyFilters();
+      } catch (err) {
+        loading.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">📭</div>
+            <h3>暂无数据</h3>
+            <p>请点击右上角的“手动获取”开始爬取数据</p>
+          </div>
+        `;
+      }
+    }
+
+    // ═══ Scraping Control ════════════════════════════════════════
+    async function updateScrapeStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const status = await res.json();
+        
+        if (status.isScraping) {
+          scrapeStatus.innerHTML = '<span class="spinner-small"></span> 正在爬取中...';
+          scrapeStatus.classList.add('active');
+          btnManualScrape.disabled = true;
+        } else {
+          scrapeStatus.innerHTML = '';
+          scrapeStatus.classList.remove('active');
+          btnManualScrape.disabled = false;
+        }
+
+        autoScrapeEnabled = status.autoScrapeActive;
+        updateAutoScrapeButton();
+      } catch (err) {
+        console.error('Failed to get status', err);
+      }
+    }
+
+    function updateAutoScrapeButton() {
+      if (autoScrapeEnabled) {
+        btnAutoScrape.classList.add('active');
+        btnAutoScrape.innerHTML = '<span class="icon">⏱️</span> 关闭自动获取';
+      } else {
+        btnAutoScrape.classList.remove('active');
+        btnAutoScrape.innerHTML = '<span class="icon">⏱️</span> 打开自动获取';
+      }
+    }
+
+    btnManualScrape.addEventListener('click', async () => {
+      try {
+        await fetch('/api/scrape', { method: 'POST' });
+        showToast('✓ 爬虫已启动！');
+        updateScrapeStatus();
+      } catch (err) {
+        showToast('❌ 启动失败');
+      }
+    });
+
+    btnAutoScrape.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/auto-scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !autoScrapeEnabled })
+        });
+        const result = await res.json();
+        autoScrapeEnabled = result.enabled;
+        updateAutoScrapeButton();
+        if (autoScrapeEnabled) showToast('✓ 自动获取已开启（每小时运行）');
+        else showToast('✓ 自动获取已关闭');
+      } catch (err) {
+        showToast('❌ 设置失败');
+      }
+    });
+
+    // ═══ Filtering & Sorting ═════════════════════════════════════
+    function parseSize(sizeStr) {
+      if (!sizeStr) return 0;
+      const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|B)/i);
+      if (!match) return 0;
+      const val = parseFloat(match[1]);
+      const unit = match[2].toLowerCase();
+      const multipliers = { 'gib': 1024*1024*1024, 'mib': 1024*1024, 'kib': 1024, 'b': 1 };
+      return val * (multipliers[unit] || 1);
+    }
+
+    function applyFilters() {
+      // Filter
+      filteredData = allData.filter(item => {
+        // Search
+        if (searchQuery && !item.title.toLowerCase().includes(searchQuery.toLowerCase())) {
+          return false;
+        }
+        // Filter buttons
+        switch (currentFilter) {
+          case 'has-images':
+            return item.localImages && item.localImages.length > 0;
+          case 'large':
+            return parseSize(item.size) > 5 * 1024 * 1024 * 1024;
+          case 'popular':
+            return item.seeders >= 50;
+          default:
+            return true;
+        }
+      });
+
+      // Sort
+      filteredData.sort((a, b) => {
+        switch (currentSort) {
+          case 'date-desc': return (b.date || '').localeCompare(a.date || '');
+          case 'date-asc': return (a.date || '').localeCompare(b.date || '');
+          case 'size-desc': return parseSize(b.size) - parseSize(a.size);
+          case 'seeders-desc': return (b.seeders || 0) - (a.seeders || 0);
+          case 'downloads-desc': return (b.downloads || 0) - (a.downloads || 0);
+          default: return 0;
+        }
+      });
+
+      showingCount.textContent = filteredData.length;
+      renderGrid();
+    }
+
+    // ═══ Rendering ═══════════════════════════════════════════════
+    function renderGrid() {
+      if (filteredData.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state" style="grid-column: 1 / -1;">
+            <div class="icon">🔍</div>
+            <h3>没有找到结果</h3>
+            <p>尝试调整您的搜索或过滤条件</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = filteredData.map((item, index) => createCard(item, index)).join('');
+      initCarousels();
+    }
+
+    function createCard(item, index) {
+      const images = item.localImages || [];
+      const hasImages = images.length > 0;
+
+      const imageSection = hasImages ? `
+        <div class="card-images" data-index="${index}">
+          ${images.map((src, i) => `
+            <img src="${src}" alt="预览 ${i+1}" 
+                 style="${i === 0 ? '' : 'display:none;'}"
+                 data-slide="${i}"
+                 loading="lazy"
+                 onclick="openModal('${src}')">
+          `).join('')}
+          ${images.length > 1 ? `
+            <button class="carousel-btn prev" onclick="prevSlide(event, ${index})">‹</button>
+            <button class="carousel-btn next" onclick="nextSlide(event, ${index})">›</button>
+            <div class="carousel-dots">
+              ${images.map((_, i) => `
+                <button class="carousel-dot ${i === 0 ? 'active' : ''}" 
+                        onclick="goToSlide(event, ${index}, ${i})"
+                        data-dot="${i}"></button>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      ` : `
+        <div class="card-images">
+          <div class="no-image-placeholder">🎬</div>
+        </div>
+      `;
+
+      return `
+        <div class="card" id="card-${item.viewId}">
+          ${imageSection}
+          <div class="card-body">
+            <div class="card-title" title="${escapeHTML(item.title)}">
+              ${escapeHTML(item.title)}
+            </div>
+            <div class="card-meta">
+              <span class="meta-tag seeders" title="做种数">
+                <span class="icon">▲</span> ${item.seeders || 0}
+              </span>
+              <span class="meta-tag leechers" title="吸血数">
+                <span class="icon">▼</span> ${item.leechers || 0}
+              </span>
+              <span class="meta-tag downloads" title="完成数">
+                <span class="icon">✓</span> ${item.downloads || 0}
+              </span>
+              <span class="meta-tag size" style="margin-left: auto; color: var(--primary);" title="文件大小">
+                <span class="icon">💾</span> ${item.size || '未知'}
+              </span>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-magnet" onclick="copyMagnet('${escapeHTML(item.magnet)}')">
+                🧲 复制磁力链
+              </button>
+              <button class="btn btn-blacklist" onclick="blacklist('${item.viewId}')" title="拉黑并删除本地数据">
+                🚫 拉黑
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // ═══ Carousel ════════════════════════════════════════════════
+    const slideStates = {};
+
+    function initCarousels() {
+      document.querySelectorAll('.card-images[data-index]').forEach(el => {
+        slideStates[el.dataset.index] = 0;
+      });
+    }
+
+    function goToSlide(event, cardIndex, slideIndex) {
+      event.stopPropagation();
+      const container = document.querySelector(`.card-images[data-index="${cardIndex}"]`);
+      if (!container) return;
+
+      const slides = container.querySelectorAll('img[data-slide]');
+      const dots = container.querySelectorAll('.carousel-dot');
+
+      slides.forEach((s, i) => s.style.display = i === slideIndex ? '' : 'none');
+      dots.forEach((d, i) => d.classList.toggle('active', i === slideIndex));
+      slideStates[cardIndex] = slideIndex;
+    }
+
+    function nextSlide(event, cardIndex) {
+      event.stopPropagation();
+      const container = document.querySelector(`.card-images[data-index="${cardIndex}"]`);
+      const total = container.querySelectorAll('img[data-slide]').length;
+      const next = ((slideStates[cardIndex] || 0) + 1) % total;
+      goToSlide(event, cardIndex, next);
+    }
+
+    function prevSlide(event, cardIndex) {
+      event.stopPropagation();
+      const container = document.querySelector(`.card-images[data-index="${cardIndex}"]`);
+      const total = container.querySelectorAll('img[data-slide]').length;
+      const current = slideStates[cardIndex] || 0;
+      const prev = (current - 1 + total) % total;
+      goToSlide(event, cardIndex, prev);
+    }
+
+    // ═══ Copy Magnet ═════════════════════════════════════════════
+    function copyMagnet(magnet) {
+      const decoded = magnet
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"');
+
+      navigator.clipboard.writeText(decoded).then(() => {
+        showToast('✓ 磁力链接已复制到剪贴板');
+      }).catch(() => {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = decoded;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('✓ 磁力链接已复制到剪贴板');
+      });
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ═══ Blacklist ═══════════════════════════════════════════════
+    async function blacklist(id) {
+      if (!confirm('确定要拉黑该项目并删除本地下载的所有照片吗？此操作不可恢复。')) return;
+
+      try {
+        const res = await fetch(`/api/blacklist/${id}`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to blacklist');
+        
+        // Remove from DOM immediately for snappy UX
+        const card = document.getElementById(`card-${id}`);
+        if (card) card.remove();
+        
+        // Remove from memory
+        allData = allData.filter(item => item.viewId !== id);
+        filteredData = filteredData.filter(item => item.viewId !== id);
+        
+        // Update stats
+        totalCount.textContent = allData.length;
+        showingCount.textContent = filteredData.length;
+        
+        showToast('🚫 已加入黑名单并删除数据');
+      } catch (err) {
+        showToast('❌ 拉黑失败，请重试');
+        console.error(err);
+      }
+    }
+
+    // ═══ Image Modal ═════════════════════════════════════════════
+    const modalScrollArea = document.getElementById('modalScrollArea');
+
+    let currentScale = 1;
+    let isFitScreen = true;
+
+    function openModal(src) {
+      modalImage.src = src;
+      imageModal.classList.add('active');
+      document.body.style.overflow = 'hidden';
+      // Wait for image to load before resetting to get correct dimensions
+      modalImage.onload = () => {
+        resetZoom();
+      };
+    }
+
+    function closeModal() {
+      imageModal.classList.remove('active');
+      document.body.style.overflow = '';
+      modalImage.onload = null;
+    }
+
+    function resetZoom() {
+      isFitScreen = true;
+      currentScale = 1;
+      modalScrollArea.classList.remove('is-zoomed');
+      modalImage.style.width = '';
+      modalImage.style.height = '';
+      modalImage.style.maxWidth = '90vw';
+      modalImage.style.maxHeight = '90vh';
+      modalImage.style.cursor = 'zoom-in';
+    }
+
+    function applyZoom(delta) {
+      if (isFitScreen && delta > 0) {
+        // Switch to manual zoom, starting from current rendered size
+        const rect = modalImage.getBoundingClientRect();
+        currentScale = rect.width / modalImage.naturalWidth;
+        isFitScreen = false;
+        modalScrollArea.classList.add('is-zoomed');
+        modalImage.style.maxWidth = 'none';
+        modalImage.style.maxHeight = 'none';
+        modalImage.style.cursor = 'zoom-out';
+      }
+
+      if (!isFitScreen) {
+        currentScale += delta;
+        if (currentScale < 0.1) currentScale = 0.1; // Limit min zoom to 10%
+        if (currentScale > 10) currentScale = 10;   // Limit max zoom to 1000%
+        
+        modalImage.style.width = `${modalImage.naturalWidth * currentScale}px`;
+        modalImage.style.height = `${modalImage.naturalHeight * currentScale}px`;
+      }
+    }
+
+    // Toggle on image click
+    modalImage.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isFitScreen) {
+        // Click to zoom to 100% original size (or double current size if already big)
+        const rect = modalImage.getBoundingClientRect();
+        let targetScale = 1; // 100% natural size
+        if (rect.width >= modalImage.naturalWidth * 0.9) {
+          targetScale = 1.5; // If it's already fitting at ~100%, zoom to 150%
+        }
+        
+        isFitScreen = false;
+        modalScrollArea.classList.add('is-zoomed');
+        modalImage.style.maxWidth = 'none';
+        modalImage.style.maxHeight = 'none';
+        modalImage.style.cursor = 'zoom-out';
+        currentScale = targetScale;
+        modalImage.style.width = `${modalImage.naturalWidth * currentScale}px`;
+        modalImage.style.height = `${modalImage.naturalHeight * currentScale}px`;
+      } else {
+        resetZoom();
+      }
+    });
+
+    // Close on background click
+    modalScrollArea.addEventListener('click', (e) => {
+      if (e.target === modalScrollArea) closeModal();
+    });
+
+    modalClose.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => {
+      if (imageModal.classList.contains('active')) {
+        if (e.key === 'Escape') {
+          closeModal();
+        } else if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          applyZoom(0.2); // Zoom in 20%
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          if (isFitScreen) {
+            const rect = modalImage.getBoundingClientRect();
+            currentScale = rect.width / modalImage.naturalWidth;
+            isFitScreen = false;
+            modalScrollArea.classList.add('is-zoomed');
+            modalImage.style.maxWidth = 'none';
+            modalImage.style.maxHeight = 'none';
+            modalImage.style.cursor = 'zoom-in';
+          }
+          applyZoom(-0.2); // Zoom out 20%
+        }
+      }
+    });
+
+    // ═══ Event Listeners ═════════════════════════════════════════
+    // Search
+    let searchTimeout;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        searchQuery = searchInput.value.trim();
+        applyFilters();
+      }, 300);
+    });
+
+    // Sort
+    sortSelect.addEventListener('change', () => {
+      currentSort = sortSelect.value;
+      applyFilters();
+    });
+
+    // Filter buttons
+    document.getElementById('filterBar').addEventListener('click', (e) => {
+      const btn = e.target.closest('.filter-btn');
+      if (!btn) return;
+
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = btn.dataset.filter;
+      applyFilters();
+    });
+
+    // ═══ Init ════════════════════════════════════════════════════
+    loadData();
+    updateScrapeStatus();
+
+    // Poll status every 3 seconds to update UI and reload data when scraping finishes
+    let wasScraping = false;
+    setInterval(async () => {
+      await updateScrapeStatus();
+      const isScraping = scrapeStatus.classList.contains('active');
+      if (wasScraping && !isScraping) {
+        // Scraper just finished, reload data!
+        showToast('✓ 爬取完成，已刷新数据');
+        loadData();
+      }
+      wasScraping = isScraping;
+    }, 3000);
+  </script>
+</body>
+</html>
